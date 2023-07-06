@@ -1,0 +1,205 @@
+
+import os
+from glob import glob
+import re
+configfile: "../config/config.yaml"
+localrules: all, merge_counts, done
+
+wildcard_constraints:
+    sample='SRR[\w]+'
+
+rule all:
+    input:
+        'DONE.txt'
+
+rule run_fastqc:
+    input:
+        R1 = f'{config["data_path"]}/raw/RNAseq/{{sample}}.fastq.gz'
+    output:
+        f'{config["data_path"]}/analyzed/{{sample}}/fastqc/{{sample}}_fastqc.html'
+    params:
+        outdir = f'{config["data_path"]}/analyzed/{{sample}}/fastqc'
+    log:
+        'logs/run_fastqc/{sample}.log'
+    resources:
+        threads=1,
+        mem='6G',
+        time='00:30:00'
+    conda:  
+        'envs/py39_STAR.yaml'
+    shell:
+        'if [ ! -d {params.outdir} ]; then mkdir -p {params.outdir}; fi && '
+        'zcat {input.R1} | fastqc -o {params.outdir} stdin:{wildcards.sample} '
+
+rule map_reads:
+    input:
+        R1 = f'{config["data_path"]}/raw/RNAseq/{{sample}}.fastq.gz'
+    output:
+        BAM = f'{config["data_path"]}/analyzed/{{sample}}/star/Aligned.sortedByCoord.out.bam',
+        star_log = f'{config["data_path"]}/analyzed/{{sample}}/star/Log.out',
+        star_log_final = f'{config["data_path"]}/analyzed/{{sample}}/star/Log.final.out'
+    params:
+        outdir = f'{config["data_path"]}/analyzed/{{sample}}/star/',
+    log:
+        'logs/map_reads/{sample}.log'
+    resources:
+        # tasks=12,
+        threads=8,
+        mem='54G',
+        time='02:00:00'
+    conda:  
+        'envs/py39_STAR.yaml'
+    shell:
+        'if [ ! -d {params.outdir} ]; then mkdir -p {params.outdir}; fi && '
+        'STAR --runThreadN 8 --genomeDir {config[genome_index]} '
+        '--readFilesCommand zcat --outSAMtype BAM SortedByCoordinate '
+        '--outFileNamePrefix {params.outdir} --outReadsUnmapped Fastx '
+        '--outFilterMultimapNmax 20 '
+        '--readFilesIn {input.R1} '
+
+rule index_bam1:
+    input:
+        f'{config["data_path"]}/analyzed/{{sample}}/star/Aligned.sortedByCoord.out.bam'
+    output:
+        f'{config["data_path"]}/analyzed/{{sample}}/star/Aligned.sortedByCoord.out.bam.bai'
+    log:
+        'logs/index_bams/{sample}.log'
+    resources:
+        # tasks=12,
+        threads=4,
+        mem='24G',
+        time='02:00:00'
+    conda:  
+        'envs/py39_STAR.yaml'
+    shell:
+        'samtools index -@ {resources.threads} {input}'
+
+rule filter_unique:
+    input:
+        f'{config["data_path"]}/analyzed/{{sample}}/star/Aligned.sortedByCoord.out.bam'
+    output:
+        f'{config["data_path"]}/analyzed/{{sample}}/star/Aligned.sortedByCoord.uniq.out.bam'
+    log:
+        'logs/filter_unique/{sample}.log'
+    resources:
+        # tasks=12,
+        threads=4,
+        mem='24G',
+        time='00:10:00'
+    conda:  
+        'envs/py39_STAR.yaml'
+    shell:
+        'samtools view -q 255 --threads {resources.threads} -o {output} {input}'
+
+
+rule index_bam2:
+    input:
+        f'{config["data_path"]}/analyzed/{{sample}}/star/Aligned.sortedByCoord.uniq.out.bam'
+    output:
+        f'{config["data_path"]}/analyzed/{{sample}}/star/Aligned.sortedByCoord.uniq.out.bam.bai'
+    log:
+        'logs/index_bams/{sample}.log'
+    resources:
+        # tasks=12,
+        threads=4,
+        mem='24G',
+        time='00:10:00'
+    conda:  
+        'envs/py39_STAR.yaml'
+    shell:
+        'samtools index -@ {resources.threads} {input}'
+
+rule count_reads:
+    input:
+        f'{config["data_path"]}/analyzed/{{sample}}/star/Aligned.sortedByCoord.uniq.out.bam'
+    output:
+        f'{config["data_path"]}/analyzed/{{sample}}/htseq/{{sample}}_htseq_counts_refseq.tsv'
+    params:
+        outdir = f'{config["data_path"]}/analyzed/{{sample}}/htseq/'
+    log:
+        'logs/count_reads_refseq/{sample}.log'
+    resources:
+        threads=1,
+        mem='6G',
+        time='01:00:00'
+    conda:
+        'envs/py39_STAR.yaml'
+    shell:
+        'htseq-count --format=bam --order=pos --stranded=no '
+        '--idattr=gene '
+        # '--idattr=gene_id --additional-attr=gene_name '
+        '--mode=union --type=exon --nonunique=none '
+        '--counts_output {output} '
+        '{input} {config[gtf]}'
+
+# htseqCommand="python -m HTSeq.scripts.count \
+#     --idattr=gene_id \
+#     --mode=union \
+#     --stranded=no \
+#     --type=exon \
+#     --order=name \
+#     $inputFile \
+#     $gtfFile \
+#     1> $countsOutFile \
+#     2> $logOutFile"
+
+rule get_coverage:
+    input:
+        bam = f'{config["data_path"]}/analyzed/{{sample}}/star/Aligned.sortedByCoord.uniq.out.bam',
+        index = f'{config["data_path"]}/analyzed/{{sample}}/star/Aligned.sortedByCoord.uniq.out.bam.bai'
+    output:
+        f'{config["data_path"]}/analyzed/{{sample}}/deepTools/{{sample}}_genomeCov.bin50bp.CPMnorm.bw'
+    params:
+        outdir = f'{config["data_path"]}/analyzed/{{sample}}/deepTools/'
+    log:
+        'logs/get_coverage/{sample}.log'
+    resources:
+        # tasks=12,
+        threads=8,
+        mem='48G',
+        time='01:00:00'
+    conda:  
+        'envs/py39_STAR.yaml'
+    shell:
+        'if [ ! -d {params.outdir} ]; then mkdir -p {params.outdir}; fi && '
+        'bamCoverage --bam {input.bam} -o {output} '
+        '--binSize 50 '
+        '--normalizeUsing CPM '
+        '--ignoreDuplicates '
+        '-p {resources.threads}'
+
+def get_sample_names():
+    sample_paths = glob(f'{config["data_path"]}/raw/RNAseq/SRR*')
+    sample_files = [os.path.basename(path) for path in sample_paths]
+    sample_names = [re.search('[\w]+(?=.fastq)', file).group() for file in sample_files]
+    return sample_names
+
+rule merge_counts:
+    input:
+        expand(f'{config["data_path"]}/analyzed/{{s}}/htseq/{{s}}_htseq_counts_refseq.tsv',  s = get_sample_names())
+    output:
+        f'{config["data_path"]}/analyzed/combined_htseq_counts_refseq.tsv'
+    log:
+        'logs/merge_counts_refseq/merge_counts.log'
+    script:
+        'scripts/merge_counts2.py'
+
+rule done:
+    input:
+        expand(f'{config["data_path"]}/analyzed/{{s}}/fastqc/{{s}}_fastqc.html', s = get_sample_names()),
+        expand(f'{config["data_path"]}/analyzed/{{s}}/star/Aligned.sortedByCoord.out.bam.bai', s = get_sample_names()),
+        expand(f'{config["data_path"]}/analyzed/{{s}}/star/Aligned.sortedByCoord.uniq.out.bam.bai', s = get_sample_names()),
+        # expand(f'{config["data_path"]}/analyzed/{{s}}/htseq/{{s}}_htseq_counts.tsv',  s = get_sample_names()),
+        expand(f'{config["data_path"]}/analyzed/{{s}}/deepTools/{{s}}_genomeCov.bin50bp.CPMnorm.bw',  s = get_sample_names()),
+        f'{config["data_path"]}/analyzed/combined_htseq_counts_refseq.tsv'
+        # expand(f'{config["data_path"]}/analyzed/{{sample}}/star/Aligned.sortedByCoord.out.bam', sample=get_sample_names()),
+        # chimeric_out = expand(f'{config["data_path"]}/analyzed/lib1_seq1_chimeric/{{sample}}/star/Chimeric.out.junction',  sample=get_sample_names()),
+        # expand(f'{config["data_path"]}/analyzed/{{sample}}/star/Log.out',  sample=get_sample_names()),
+        # expand(f'{config["data_path"]}/analyzed/{{sample}}/star/Log.final.out',  sample=get_sample_names())
+        # expand(f'{config["data_path"]}/analyzed/lib1_seq1_chimeric/{{sample}}/fastqc/{{sample}}_R1_fastqc.html', sample=get_sample_names())
+        # config["gtf_new"]
+    output:
+        'DONE.txt'
+    shell:
+        'touch {output}'
+

@@ -1,0 +1,27 @@
+cluster:
+  mkdir -p logs/{rule} &&
+  sbatch
+    --time={resources.time}
+    --ntasks={resources.tasks}
+    --nodes={resources.nodes}
+    --mem={resources.mem}
+    --cpus-per-task={resources.threads}
+    --output=logs/{rule}/`date +%Y-%m-%d_%H-%M`_{rule}_{wildcards}.out
+    --error=logs/{rule}/`date +%Y-%m-%d_%H-%M`_{rule}_{wildcards}.err
+    --job-name==smk-{rule}-{wildcards}
+default-resources:
+  - time="01:00:00"
+  - tasks=1
+  - nodes=1
+  - mem=6000
+  - threads=1
+# restart-times: 3
+max-jobs-per-second: 10
+max-status-checks-per-second: 1
+jobs: 100
+# keep-going: True
+rerun-incomplete: True
+printshellcmds: True
+latency-wait: 7200 #seconds
+scheduler: greedy
+use-conda: True

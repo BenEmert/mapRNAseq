@@ -1,0 +1,6 @@
+#Genome reference files
+prefix: 'mm10'
+genome_index: '/groups/Clustowitz/Genomes/indexes/mm10/star/ENCODE/'
+gtf: '/groups/Clustowitz/Genomes/annotations/mm10/NCBI/GCA_000001635.5_GRCm38.p3_full_analysis_set.refseq_annotation.gff.gz'
+project_path: '/groups/Clustowitz/bemert/20230407_RNASeq_BG/mapRNAseq'
+data_path: '/groups/Clustowitz/bemert/20230407_RNASeq_BG/data'

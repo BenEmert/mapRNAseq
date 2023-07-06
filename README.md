@@ -1,0 +1,2 @@
+# mapRNAseq
+ RNAseq snakemake pipeline 
